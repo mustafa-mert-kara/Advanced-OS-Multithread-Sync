@@ -12,11 +12,10 @@
 #include <errno.h>
 #define PRODMEAN 500
 #define PRODSTD 100
-#define ACTIVEADVANTAGE 1
+#define ACTIVEADVANTAGE 2
 #define GROUPADVANTAGE 5
 #define CARPASSINGTIME 1000
 #define LANECHECKTIME 1000
-//struct LANEGROUP;
 
 /*
 Wait: 
@@ -61,28 +60,21 @@ typedef struct CAR
 
 
 typedef struct CROSSSECTION{
-	int id;
-	pthread_mutex_t syncMutex;	
+	int id;	
 	pthread_mutex_t dataMutex;
-	sem_t *group_sem;
-	int sectionType;
 	struct LANEGROUP** crossingLaneGroups;
 	int totalLaneGroups;
 	struct LANE** crossingLanes;
 	int totalLanes; 
-	int rrPointer;
-	int totalLanesInCrossSection;
 	struct LANE** currentlyCrossing;
 	int currPrioHolder;
 }crossSection;
 
 typedef struct LANE{
 	int id;
-	char dir;
 	struct LANE** crossingLanes;
 	int crossingCount;
 	mqd_t msgq_id;
-	//int* carsWaiting;
 	int lanePrio;	
 	int64_t lastTimeLock;
 	int64_t carCreationTimes[10];
@@ -95,7 +87,6 @@ typedef struct LANEGROUP{
 	int id;
 	struct LANE** lanes;
 	int laneCount;
-	int* carsWaiting;
 	int groupPrio;
 	int groupFinished;
 }laneGroup;
@@ -188,10 +179,6 @@ int doIHavePrio(crossSection* section,laneGroup* group, lane* Lane){
 		}
 			
 	}else{
-		// int i;
-		// for(i=0;i<section->totalLanes;i++)
-		// 	if((section->crossingLanes[i]->id==section->currPrioHolder)&&(section->crossingLanes[i]->laneFinished))
-		// 		section->currPrioHolder=-1;
 		if((section->currPrioHolder==-1)||(Lane->id==section->currPrioHolder)){
 			section->currPrioHolder=Lane->id;
 			return 1;
@@ -231,15 +218,12 @@ int checkPrio(crossSection* section,laneGroup* group, lane* Lane, int advantage 
 	int amIAllowedToChange=doIHavePrio(section,group,Lane);
 	if(amIAllowedToChange){
 		if(section->totalLaneGroups>0){
-			// printf("Calc Lane %d ",Lane->id);
 			for(i=0;i<section->totalLaneGroups;i++){
-				// printf("Prio Group %d: %d ",section->crossingLaneGroups[i]->id,section->crossingLaneGroups[i]->groupPrio);
 				if((section->crossingLaneGroups[i]->groupFinished==0)&&(section->crossingLaneGroups[i]->groupPrio>maxPrio)){
 					maxPrio=section->crossingLaneGroups[i]->groupPrio;
 					maxPrioIdx=i;
 				}
 			}
-			// printf("\n");
 			pthread_mutex_lock(&section->dataMutex);
 			if(maxPrioIdx==-1){
 				section->currPrioHolder=-1;	
@@ -252,29 +236,14 @@ int checkPrio(crossSection* section,laneGroup* group, lane* Lane, int advantage 
 				return 1;
 			else
 				return 0;
-			// else{
-			// 	for(i=0;i<section->crossingLaneGroups[maxPrioIdx]->laneCount;i++){
-			// 		pthread_mutex_lock(&section->crossingLaneGroups[maxPrioIdx]->lanes[i]->prioMutex);
-			// 		pthread_cond_signal(&section->crossingLaneGroups[maxPrioIdx]->lanes[i]->condList);
-			// 		pthread_mutex_unlock(&section->crossingLaneGroups[maxPrioIdx]->lanes[i]->prioMutex);
-			// 	}
-				
-			// }
-
 		}else{
-			// printf("Calc Lane %d ",Lane->id);
 			for(i=0;i<section->totalLanes;i++){
-				// printf("Prio %d: %d ",section->crossingLanes[i]->id,section->crossingLanes[i]->lanePrio);
-				int lanePrio=section->crossingLanes[i]->lanePrio;
-				// if((advantage)&&(section->crossingLanes[i]->id==Lane->id))
-				// 	lanePrio*=GROUPADVANTAGE;
-				
+				int lanePrio=section->crossingLanes[i]->lanePrio;				
 				if((section->crossingLanes[i]->laneFinished==0)&&(lanePrio>maxPrio)){
 					maxPrio=section->crossingLanes[i]->lanePrio;
 					maxPrioIdx=i;
 				}
 			}
-			// printf("\nMaxPrio: %d, Maxidx: %d\n",maxPrio,maxPrioIdx);
 			pthread_mutex_lock(&section->dataMutex);
 			if(maxPrioIdx==-1){
 				section->currPrioHolder=-1;
@@ -286,11 +255,6 @@ int checkPrio(crossSection* section,laneGroup* group, lane* Lane, int advantage 
 				return 1;
 			else
 				return 0;
-			// else{
-			// 	pthread_mutex_lock(&section->crossingLanes[maxPrioIdx]->prioMutex);
-			// 	pthread_cond_signal(&section->crossingLanes[maxPrioIdx]->condList);
-			// 	pthread_mutex_unlock(&section->crossingLanes[maxPrioIdx]->prioMutex);
-			// }
 		}
 	}
 	return 0;
@@ -310,18 +274,14 @@ return 1;
 }
 
 int checkAllPrios(t_input* laneInfo){
-	//printf("Check All Prios: Lane %d\n",laneInfo->lane->id);
 	if(laneInfo->sectionCount==0)
 		return 1;
 	int i;
 	for(i=0;i<laneInfo->sectionCount;i++){
 		pthread_mutex_lock(&laneInfo->section[i]->dataMutex);
 		int res=doIHavePrio(laneInfo->section[i],laneInfo->group,laneInfo->lane);
-		//printf("Do I Have Prio: Lane %d - Section T %d, id %d - Res: %d\n",
-		//	laneInfo->lane->id,laneInfo->section[i]->sectionType,laneInfo->section[i]->id,res);
 		pthread_mutex_unlock(&laneInfo->section[i]->dataMutex);
 		if(res==0){
-			//printf("Lane %d Doesn't have Prio for Section %d\n",laneInfo->lane->id,laneInfo->section[i]->id);
 			return 0;
 		}
 			
@@ -369,20 +329,14 @@ int updateAllPrios(t_input* laneInfo){
  }
 void releaseAllKeys(crossSection** sections,int sectionsCount,lane* Lane){
 	int i;
-	//printf("Lane %d Release All Keys\n",Lane->id);
 	struct timeval tv;
 	gettimeofday(&tv,NULL);
 	int64_t currTime=gettime(tv);
 	Lane->lastTimeLock=currTime;
 	for(i=0;i<sectionsCount;i++){
-		sections[i]->currentlyCrossing[Lane->id]=NULL;
-		/*for(i=1;i<11;i++){
-			if(sections[i]->currentlyCrossing[i]!=NULL)
-				pthread_cond_signal(&sections[i]->currentlyCrossing[i]->condList);
-		}	*/	
+		sections[i]->currentlyCrossing[Lane->id]=NULL;		
 	}
 	for(i=0;i<Lane->crossingCount;i++){
-		//printf("Lane %d Release All Keys Wakes Lane %d\n",Lane->id,Lane->crossingLanes[i]->id);
 		pthread_mutex_lock(&Lane->crossingLanes[i]->prioMutex);
 		pthread_cond_signal(&Lane->crossingLanes[i]->condList);
 		pthread_mutex_unlock(&Lane->crossingLanes[i]->prioMutex);
@@ -405,20 +359,15 @@ void* carProducer(void* arg){
 		Lane->carCreationTimes[i]=currTime;
 		newCar->passageTime=0;
 		newCar->isItFinal=0;
-
 		if(i==9){
 			newCar->isItFinal=1;
-		}
-			
+		}			
 		mq_send(Lane->msgq_id, (char*) newCar, sizeof(car), 0);
 		pthread_mutex_lock(&Lane->prioMutex);
 		pthread_cond_signal(&Lane->condList);
 		pthread_mutex_unlock(&Lane->prioMutex);
 		sleep_ms((long)gaussian());
 	}
-	
-
-	
 	return NULL;
 }
 
@@ -429,7 +378,6 @@ void* laneControl(void* arg){
 	crossSection** section=laneInfo->section;	
 	calcPrio(Lane,0);
 	calcGroupPrio(group);
-	//printf("Lane %d - Prio: %d\n",Lane->id,Lane->lanePrio);
 	car* carPassing;
 	long totalTimeToFinish=0;
 	do{
@@ -470,7 +418,6 @@ void* laneControl(void* arg){
 		updateAllPrios(laneInfo);
 		
 		releaseAllKeys(section,laneInfo->sectionCount,Lane);
-		//printf("New Prio: %d\n",Lane->lanePrio);
 	}while(carPassing->isItFinal==0);
 	laneInfo->lane->lanePrio=0;
 	laneInfo->lane->lastTimeLock=0;
@@ -513,32 +460,16 @@ crossSection* createCrossSection(int id){
 	newCrossSection->crossingLanes=(lane**) malloc(3*sizeof(lane*));
 	newCrossSection->totalLanes=0;
 
-	newCrossSection->rrPointer=0;
-	newCrossSection->totalLanesInCrossSection=0;
-
 	newCrossSection->currentlyCrossing=(lane**) malloc(11*sizeof(lane*));
 
 	newCrossSection->currPrioHolder=-1;
 
-	pthread_mutex_init(&newCrossSection->syncMutex, NULL);
-	pthread_mutex_init(&newCrossSection->dataMutex, NULL);
-	char SEM_NAME[100];
-	sprintf(SEM_NAME, "/%d_sem", id);
-	newCrossSection->group_sem = sem_open(SEM_NAME,O_CREAT,0644,2);
-	if(newCrossSection->group_sem == SEM_FAILED)  {
-      perror("unable to create semaphore");
-      sem_unlink(SEM_NAME);
-      exit(-1);
-  }
+	pthread_mutex_init(&newCrossSection->dataMutex, NULL);	
 
 	return newCrossSection;
 }
 
-void destroyCrossSection(crossSection* cSToDestroy){
-	char SEM_NAME[100];
-	sprintf(SEM_NAME, "/%d_sem", cSToDestroy->id);
-	sem_close(cSToDestroy->group_sem);
-  	sem_unlink(SEM_NAME);
+void destroyCrossSection(crossSection* cSToDestroy){	
 	free(cSToDestroy->crossingLaneGroups);
 	free(cSToDestroy->crossingLanes);
 	free(cSToDestroy->currentlyCrossing);
@@ -554,15 +485,12 @@ laneGroup* createLaneGroup(int id){
 	newGroup->id=id;
 	newGroup->lanes=(lane**)malloc(3*sizeof(lane*));
 	newGroup->laneCount=0;
-	newGroup->carsWaiting=(int*)calloc(1,sizeof(int));
-	newGroup->carsWaiting=0;
 	newGroup->groupPrio=0;
 	return newGroup;
 }
 
 void destroyLaneGroup(laneGroup* groupToDestroy){
 	free(groupToDestroy->lanes);
-	free(groupToDestroy->carsWaiting);
 	free(groupToDestroy);
 }
 
@@ -570,13 +498,10 @@ void addCrossingLane(lane* src, lane* dst){
 	src->crossingLanes[src->crossingCount++]=dst;
 }
 
-lane* createLane(int id,char dir){
+lane* createLane(int id){
 	int i;
 	lane *newLane=(lane*)calloc(1,sizeof(lane));
 	newLane->id=id;
-	newLane->dir=dir;
-	/*newLane->carsWaiting=(int*)calloc(1,sizeof(int));
-	newLane->carsWaiting=0;*/
 	newLane->lanePrio=0;	
 	newLane->lastTimeLock=0;
 	newLane->laneFinished=0;
@@ -644,7 +569,7 @@ int main(){
 	ResetProgram();
 
 	for(i=1;i<11;i++){
-		lanes[i]=createLane(i,laneDirs[i]);
+		lanes[i]=createLane(i);
 		laneInfos[i]=(t_input*)calloc(1,sizeof(t_input));
 		laneInfos[i]->lane=lanes[i];
 		laneInfos[i]->group=NULL;
@@ -671,14 +596,12 @@ int main(){
 		j=0;
 		while((j<3)&&(crossSections[i][j]!=0)){
 			if(crossSections[i][j]>0){
-				sections[i]->sectionType=0;
 				addLaneGroupToSection(sections[i],groups[crossSections[i][j]-1]);
 				int k;
 				for(k=0;k<groups[crossSections[i][j]-1]->laneCount;k++)
 					laneInfos[groups[crossSections[i][j]-1]->lanes[k]->id]->section[laneInfos[groups[crossSections[i][j]-1]->lanes[k]->id]->sectionCount++]=
 					sections[i];
 			}else{
-				sections[i]->sectionType=1;
 				addLaneToSection(sections[i],lanes[-1*crossSections[i][j]]);
 				laneInfos[-1*crossSections[i][j]]->section[laneInfos[-1*crossSections[i][j]]->sectionCount++]=sections[i];
 			}			
